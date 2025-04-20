@@ -1,0 +1,3 @@
+<!-- Use this file to provide workspace-specific custom instructions to Copilot. For more details, visit https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
+use the latest version of three.js and when writing code use the latest documentation found at https://threejs.org/docs/
+for spacetime db use the latest version and when writing code use the latest documentation found at https://spacetimedb.com/docs/sdks/typescript
