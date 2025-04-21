@@ -4,7 +4,6 @@ when writing rust spacetimedb code always reference the latest documentation at 
 when writing client side code, reference the latest typescript spacetimeDB sdks found at https://spacetimedb.com/docs/sdks/typescript
 
 
-
 When generating a messages for commits, use the conventional commit format. For example, use "feat: add new feature" for new features, "fix: fix bug" for bug fixes, and "chore: update dependencies" for dependency updates. Use the following commit message format:
 - feat: add new feature
 - fix: fix bug
