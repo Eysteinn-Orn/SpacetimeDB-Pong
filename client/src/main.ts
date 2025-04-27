@@ -16,6 +16,18 @@ import {
 } from './module_bindings/index';
 
 
+// --- HUD Helper ---
+const hudElement = document.getElementById('hud');
+
+function updateHUD(text: string) {
+    if (hudElement) {
+        hudElement.textContent = text;
+    } else {
+        console.warn("HUD element not found!");
+    }
+}
+
+
 // --- Three.js Setup ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
@@ -46,15 +58,18 @@ function registerTableCallbacks(connection: DbConnection) {
     // GameState Callbacks
     connection.db.gameState.onInsert((ctx: EventContext, gameState: GameState) => {
         console.log("GameState Insert:", ctx.event.tag, gameState);
-        // TODO: Update scores, player assignments etc. in UI/Three.js
+        // Example usage: Update HUD with scores
+        updateHUD(`Score: ${gameState.score1} - ${gameState.score1}`); 
     });
     connection.db.gameState.onUpdate((ctx: EventContext, oldGameState: GameState, newGameState: GameState) => {
         console.log("GameState Update:", ctx.event.tag, oldGameState, "->", newGameState);
-        // TODO: Update scores, player assignments etc. in UI/Three.js 
+        // Example usage: Update HUD with scores
+        updateHUD(`Score: ${newGameState.score2} - ${newGameState.score2}`); 
     });
      connection.db.gameState.onDelete((ctx: EventContext, gameState: GameState) => {
         console.log("GameState Delete:", ctx.event.tag, gameState);
-        // TODO: Handle game reset or unexpected deletion
+        // Example usage: Clear HUD or show reset message
+        updateHUD("Game Resetting..."); 
     });
 
     // PlayerInput Callbacks
@@ -157,6 +172,7 @@ initializeSpacetimeDB({
         if (statusElement) {
             statusElement.textContent = "Connected! Subscribing to game state...";
         }
+        updateHUD("Connected. Waiting for game..."); // Initial HUD message
 
         // Register table callbacks *after* connection and *before* subscription applied
         registerTableCallbacks(connection); 
@@ -190,6 +206,7 @@ initializeSpacetimeDB({
         if (statusElement) {
             statusElement.textContent = "Disconnected.";
         }
+        updateHUD("Disconnected."); // Update HUD on disconnect
     }
 });
 

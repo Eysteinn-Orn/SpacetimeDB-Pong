@@ -6,7 +6,7 @@ import {
 } from './module_bindings/index';
 
 // --- SpacetimeDB Setup ---
-const host = "localhost:3000"; // SpacetimeDB host
+const host = "192.168.1.11:3000"; // SpacetimeDB host
 const dbName = "spacetime-pong"; // Database name used during publish
 
 // Store the connection globally or pass it around

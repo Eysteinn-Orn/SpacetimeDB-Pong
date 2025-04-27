@@ -19,7 +19,8 @@ body {
   place-items: center;
   min-width: 320px;
   min-height: 100vh;
-  overflow: hidden; /* Prevent scrollbars from Three.js canvas */
+  overflow: hidden; 
+  /* Prevent scrollbars from Three.js canvas */
 }
 
 h1 {
@@ -36,4 +37,18 @@ h1 {
 
 canvas {
   display: block; /* Remove extra space below canvas */
+}
+
+#hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  color: white;
+  font-family: monospace;
+  font-size: 16px;
+  background-color: rgba(0, 0, 0, 0.5); /* Optional background */
+  padding: 5px;
+  border-radius: 3px; /* Optional */
+  z-index: 10; /* Ensure it's above the canvas */
+  pointer-events: none; /* Allow clicks to pass through */
 }
