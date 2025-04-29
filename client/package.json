@@ -14,7 +14,9 @@
   },
   "dependencies": {
     "@clockworklabs/spacetimedb-sdk": "^1.0.3",
+    "@types/matter-js": "^0.19.8",
     "@types/three": "^0.175.0",
+    "matter-js": "^0.20.0",
     "three": "^0.175.0"
   }
 }

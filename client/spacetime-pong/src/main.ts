@@ -1,19 +1,19 @@
-/// <reference types="vite/client" />
-import './style.css'
-import * as THREE from 'three';
+import Matter from 'matter-js';
 // Import generated bindings and necessary SDK types
 import { GameState } from './module_bindings/game_state_type';
 import { PlayerInput } from './module_bindings/player_input_type';
 import { Ball } from './module_bindings/ball_type';
 // Import SpacetimeDB connection logic and types needed for callbacks
-import { 
-    initializeSpacetimeDB, 
+import {
+    initializeSpacetimeDB,
     spacetimedbConnection // Import the exported variable directly if preferred
-} from './spacetimedb'; 
-import { 
-    DbConnection, 
-    EventContext 
+} from './spacetimedb';
+import {
+    DbConnection,
+    EventContext
 } from './module_bindings/index';
+import './style.css';
+import { Identity } from '@clockworklabs/spacetimedb-sdk';
 
 
 // --- HUD Helper ---
@@ -27,28 +27,110 @@ function updateHUD(text: string) {
     }
 }
 
+// --- Coordinate System Mapping ---
+// Server: Origin at center, X: -5 to 5, Y: -2.5 to 2.5
+// Matter.js: Origin at top-left, X: 0 to WORLD_WIDTH, Y: 0 to WORLD_HEIGHT
 
-// --- Three.js Setup ---
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x111111);
-const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
-camera.position.z = 5;
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize( window.innerWidth, window.innerHeight );
-document.body.appendChild( renderer.domElement );
-const ambientLight = new THREE.AmbientLight( 0xffffff, 0.5 );
-scene.add( ambientLight );
-const directionalLight = new THREE.DirectionalLight( 0xffffff, 0.8 );
-directionalLight.position.set( 1, 1, 1 );
-scene.add( directionalLight );
+// Game world dimensions (in pixels)
+const WORLD_WIDTH = 800;
+const WORLD_HEIGHT = 400;
 
-// Game Elements Management
-const paddles = new Map<string, THREE.Mesh>(); // Key: Identity Hex String
-let ballMesh: THREE.Mesh | null = null; // Only one ball
-const paddleGeometry = new THREE.BoxGeometry( 0.2, 1, 0.2 );
-const ballGeometry = new THREE.SphereGeometry( 0.1, 16, 16 );
-const material = new THREE.MeshStandardMaterial( { color: 0xffffff } );
+// Server game constants (from lib.rs)
+const SERVER_COURT_WIDTH = 10.0;
+const SERVER_COURT_HEIGHT = 5.0;
+const SERVER_PADDLE_HEIGHT = 1.0;
+const SERVER_PADDLE_WIDTH = 0.2;
+const SERVER_BALL_RADIUS = 0.1;
+const SERVER_PADDLE_X_OFFSET = SERVER_COURT_WIDTH / 2.0 - 0.5; // 4.5
 
+// Scaling factors
+const SCALE_X = WORLD_WIDTH / SERVER_COURT_WIDTH;
+const SCALE_Y = WORLD_HEIGHT / SERVER_COURT_HEIGHT;
+
+// Matter.js dimensions
+const PADDLE_WIDTH = SERVER_PADDLE_WIDTH * SCALE_X;
+const PADDLE_HEIGHT = SERVER_PADDLE_HEIGHT * SCALE_Y;
+const BALL_RADIUS = SERVER_BALL_RADIUS * SCALE_X; // Using X scale to keep it round
+const WALL_THICKNESS = 50; // Thickness for invisible walls
+
+// Coordinate conversion functions
+function serverToMatterX(x: number): number {
+    return (x + SERVER_COURT_WIDTH/2) * SCALE_X;
+}
+
+function serverToMatterY(y: number): number {
+    return (y + SERVER_COURT_HEIGHT/2) * SCALE_Y;
+}
+
+function matterToServerX(x: number): number {
+    return (x / SCALE_X) - SERVER_COURT_WIDTH/2;
+}
+
+function matterToServerY(y: number): number {
+    return (y / SCALE_Y) - SERVER_COURT_HEIGHT/2;
+}
+
+// --- Matter.js Setup ---
+const Engine = Matter.Engine,
+    Render = Matter.Render,
+    Runner = Matter.Runner,
+    Bodies = Matter.Bodies,
+    Composite = Matter.Composite,
+    Body = Matter.Body;
+
+// Create engine
+const engine = Engine.create();
+const world = engine.world;
+engine.gravity.y = 0; // No gravity for Pong
+
+// Create renderer
+const renderElement = document.getElementById('game-canvas') || document.body;
+
+const render = Render.create({
+    element: renderElement,
+    engine: engine,
+    options: {
+        width: WORLD_WIDTH,
+        height: WORLD_HEIGHT,
+        wireframes: true, // Show shapes filled
+        background: '#111111'
+    }
+});
+
+// Add walls (top, bottom) - make them static
+Composite.add(world, [
+    // Top wall
+    Bodies.rectangle(WORLD_WIDTH / 2, -WALL_THICKNESS / 2, WORLD_WIDTH, WALL_THICKNESS, { 
+        isStatic: true, 
+        render: { visible: false } 
+    }),
+    // Bottom wall
+    Bodies.rectangle(WORLD_WIDTH / 2, WORLD_HEIGHT + WALL_THICKNESS / 2, WORLD_WIDTH, WALL_THICKNESS, { 
+        isStatic: true, 
+        render: { visible: false } 
+    })
+]);
+
+// Run the renderer
+Render.run(render);
+
+// Create runner
+const runner = Runner.create();
+
+// Run the engine
+Runner.run(runner, engine);
+console.log("Matter.js engine and renderer started.");
+
+
+// Game Elements Management (using Matter.js Bodies)
+const paddles = new Map<string, Matter.Body>(); // Key: Identity Hex String
+let ballBody: Matter.Body | null = null; // Only one ball
+
+
+// --- Helper Functions ---
+function findPlayerInfo(connection: DbConnection, playerId: Identity) {
+    return Array.from(connection.db.playerInfo.iter()).find(p => p.playerId.isEqual(playerId));
+}
 
 // --- SpacetimeDB Callbacks & Registration ---
 
@@ -58,101 +140,132 @@ function registerTableCallbacks(connection: DbConnection) {
     // GameState Callbacks
     connection.db.gameState.onInsert((ctx: EventContext, gameState: GameState) => {
         console.log("GameState Insert:", ctx.event.tag, gameState);
-        // Example usage: Update HUD with scores
-        updateHUD(`Score: ${gameState.score1} - ${gameState.score1}`); 
+        updateHUD(`Score: ${gameState.score1} - ${gameState.score2}`);
     });
     connection.db.gameState.onUpdate((ctx: EventContext, oldGameState: GameState, newGameState: GameState) => {
         console.log("GameState Update:", ctx.event.tag, oldGameState, "->", newGameState);
-        // Example usage: Update HUD with scores
-        updateHUD(`Score: ${newGameState.score2} - ${newGameState.score2}`); 
+        updateHUD(`Score: ${newGameState.score1} - ${newGameState.score2}`);
     });
-     connection.db.gameState.onDelete((ctx: EventContext, gameState: GameState) => {
+    connection.db.gameState.onDelete((ctx: EventContext, gameState: GameState) => {
         console.log("GameState Delete:", ctx.event.tag, gameState);
-        // Example usage: Clear HUD or show reset message
-        updateHUD("Game Resetting..."); 
+        updateHUD("Game Resetting...");
     });
 
     // PlayerInput Callbacks
     connection.db.playerInput.onInsert((ctx: EventContext, playerInput: PlayerInput) => {
         console.log("PlayerInput Insert:", ctx.event.tag, playerInput);
-        const playerIdHex = playerInput.playerId.toHexString(); 
+        const playerIdHex = playerInput.playerId.toHexString();
         let paddle = paddles.get(playerIdHex);
         if (!paddle) {
-            paddle = new THREE.Mesh(paddleGeometry, material);
-            // Iterate through PlayerInfo to find the matching player
-            // Note: This might be inefficient for large numbers of players.
-            // Consider optimizing on the server-side if needed.
-            const playerInfo = Array.from(connection.db.playerInfo.iter()).find(p => p.playerId.isEqual(playerInput.playerId));
-            paddle.position.x = playerInfo?.side === 1 ? -4 : 4; 
+            // Find player side info
+            const playerInfo = findPlayerInfo(connection, playerInput.playerId);
+            
+            // Determine paddle X position based on side
+            const serverPaddleX = playerInfo?.side === 1 
+                ? -SERVER_PADDLE_X_OFFSET  // Left side (-4.5)
+                : SERVER_PADDLE_X_OFFSET;  // Right side (4.5)
+            
+            // Convert server coordinates to Matter.js coordinates
+            const matterX = serverToMatterX(serverPaddleX);
+            const matterY = serverToMatterY(playerInput.paddleY);
+
+            paddle = Bodies.rectangle(matterX, matterY, PADDLE_WIDTH, PADDLE_HEIGHT, {
+                isStatic: true, // Paddles don't react to physics
+                label: `paddle_${playerIdHex}`,
+                render: { fillStyle: '#FFFFFF' } // White paddles
+            });
+
             paddles.set(playerIdHex, paddle);
-            scene.add(paddle);
-            console.log(`Created paddle for ${playerIdHex}`);
+            Composite.add(world, paddle);
+            console.log(`Created paddle body for ${playerIdHex} at (${matterX}, ${matterY})`);
+        } else {
+            // If paddle already exists, just update its position
+            const matterY = serverToMatterY(playerInput.paddleY);
+            Body.setPosition(paddle, { x: paddle.position.x, y: matterY });
         }
-        paddle.position.y = playerInput.paddleY;
     });
     connection.db.playerInput.onUpdate((ctx: EventContext, oldPlayerInput: PlayerInput, newPlayerInput: PlayerInput) => {
         console.log("PlayerInput Update:", ctx.event.tag, oldPlayerInput, "->", newPlayerInput);
-        // Update paddle position in Three.js
         const playerIdHex = newPlayerInput.playerId.toHexString();
         const paddle = paddles.get(playerIdHex);
         if (paddle) {
-            paddle.position.y = newPlayerInput.paddleY;
+            const matterY = serverToMatterY(newPlayerInput.paddleY);
+            Body.setPosition(paddle, { x: paddle.position.x, y: matterY });
         } else {
-             console.warn(`Received PlayerInput update for unknown player: ${playerIdHex}`);
-             // Optionally, handle creation here if insert was missed (race condition?)
+            console.warn(`Received PlayerInput update for unknown player: ${playerIdHex}`);
         }
     });
     connection.db.playerInput.onDelete((ctx: EventContext, playerInput: PlayerInput) => {
         console.log("PlayerInput Delete:", ctx.event.tag, playerInput);
-        // Remove paddle from Three.js
-         const playerIdHex = playerInput.playerId.toHexString();
-         const paddle = paddles.get(playerIdHex);
-         if (paddle) {
-             scene.remove(paddle);
-             paddles.delete(playerIdHex);
-             console.log(`Removed paddle for ${playerIdHex}`);
-         }
+        const playerIdHex = playerInput.playerId.toHexString();
+        const paddle = paddles.get(playerIdHex);
+        if (paddle) {
+            Composite.remove(world, paddle);
+            paddles.delete(playerIdHex);
+            console.log(`Removed paddle body for ${playerIdHex}`);
+        }
     });
 
     // Ball Callbacks
     connection.db.ball.onInsert((ctx: EventContext, ball: Ball) => {
         console.log("Ball Insert:", ctx.event.tag, ball);
-        if (!ballMesh) {
-            ballMesh = new THREE.Mesh(ballGeometry, material);
-            scene.add(ballMesh);
-            console.log("Created ball mesh");
+        if (!ballBody) {
+            // Convert server coordinates to Matter.js coordinates
+            const matterX = serverToMatterX(ball.x);
+            const matterY = serverToMatterY(ball.y);
+
+            ballBody = Bodies.circle(matterX, matterY, BALL_RADIUS, {
+                label: 'ball',
+                restitution: 1, // Bouncy
+                friction: 0, // No friction
+                frictionAir: 0, // No air resistance
+                frictionStatic: 0, // No static friction
+                render: { fillStyle: '#FFFFFF' } // White ball
+            });
+            Composite.add(world, ballBody);
+            console.log(`Created ball body at (${matterX}, ${matterY})`);
+        } else {
+            // If ball exists, just update position
+            const matterX = serverToMatterX(ball.x);
+            const matterY = serverToMatterY(ball.y);
+            Body.setPosition(ballBody, { x: matterX, y: matterY });
+            // Reset velocity since server dictates position
+            Body.setVelocity(ballBody, { x: 0, y: 0 });
         }
-        // Use ball.x and ball.y based on Ball type definition
-        ballMesh.position.set(ball.x, ball.y, 0); 
     });
     connection.db.ball.onUpdate((ctx: EventContext, oldBall: Ball, newBall: Ball) => {
         console.log("Ball Update:", ctx.event.tag, oldBall, "->", newBall);
-        if (ballMesh) {
-            // Use newBall.x and newBall.y based on Ball type definition
-            ballMesh.position.set(newBall.x, newBall.y, 0);
+        if (ballBody) {
+            // Convert server coordinates to Matter.js coordinates
+            const matterX = serverToMatterX(newBall.x);
+            const matterY = serverToMatterY(newBall.y);
+
+            // Set position as server is the source of truth
+            Body.setPosition(ballBody, { x: matterX, y: matterY });
+            // Reset velocity to avoid conflicts with server
+            Body.setVelocity(ballBody, { x: 0, y: 0 });
         } else {
-            console.warn("Received Ball update but ball mesh doesn't exist.");
+            console.warn("Received Ball update but ball body doesn't exist.");
         }
     });
-     connection.db.ball.onDelete((ctx: EventContext, ball: Ball) => {
+    connection.db.ball.onDelete((ctx: EventContext, ball: Ball) => {
         console.log("Ball Delete:", ctx.event.tag, ball);
-        // Handle ball removal/reset
-        if (ballMesh) {
-            scene.remove(ballMesh);
-            ballMesh = null; // Allow recreation on next insert
-            console.log("Removed ball mesh");
+        if (ballBody) {
+            Composite.remove(world, ballBody);
+            ballBody = null; // Allow recreation on next insert
+            console.log("Removed ball body");
         }
     });
 
     console.log("Callbacks registered.");
 }
 
-// Function to call the move_paddle reducer (uses imported connection)
+// Function to call the move_paddle reducer
 function sendPaddleMove(y: number) {
-    // Use the imported connection variable directly
-    if (spacetimedbConnection) { 
-        // console.log(`Sending move_paddle: y=${y}`); // Reduce console noise
-        spacetimedbConnection.reducers.movePaddle(y);
+    if (spacetimedbConnection) {
+        // Convert Matter.js Y coordinate to server Y coordinate before sending
+        const serverY = matterToServerY(y);
+        spacetimedbConnection.reducers.movePaddle(serverY);
     } else {
         console.warn("Cannot send paddle move: Not connected to SpacetimeDB.");
     }
@@ -167,15 +280,13 @@ initializeSpacetimeDB({
         console.log("My Identity:", identity.toHexString());
         console.log("Received token:", token);
 
-        // Update UI
         const statusElement = document.querySelector('#app .card p');
         if (statusElement) {
             statusElement.textContent = "Connected! Subscribing to game state...";
         }
-        updateHUD("Connected. Waiting for game..."); // Initial HUD message
+        updateHUD("Connected. Waiting for game...");
 
-        // Register table callbacks *after* connection and *before* subscription applied
-        registerTableCallbacks(connection); 
+        registerTableCallbacks(connection);
     },
     onSubscriptionApplied: (_ctx) => {
         console.log("Successfully subscribed to all tables.");
@@ -201,45 +312,90 @@ initializeSpacetimeDB({
     },
     onDisconnect: (_context, error) => {
         console.log("Disconnected from SpacetimeDB.", error ? `Reason: ${error.message}` : '');
-        // spacetimedbConnection is set to null internally by initializeSpacetimeDB
         const statusElement = document.querySelector('#app .card p');
         if (statusElement) {
             statusElement.textContent = "Disconnected.";
         }
-        updateHUD("Disconnected."); // Update HUD on disconnect
+        updateHUD("Disconnected.");
+        // Clean up Matter.js bodies on disconnect
+        paddles.forEach(paddle => Composite.remove(world, paddle));
+        paddles.clear();
+        if (ballBody) {
+            Composite.remove(world, ballBody);
+            ballBody = null;
+        }
     }
 });
+// Throttle function to limit the frequency of updates
+function throttle(func: (...args: any[]) => void, limit: number) {
+    let inThrottle: boolean;
+    let lastFunc: number | undefined;
+    let lastRan: number;
+    return function(this: any, ...args: any[]) {
+        const context = this;
+        if (!inThrottle) {
+            func.apply(context, args);
+            lastRan = Date.now();
+            inThrottle = true;
+            setTimeout(() => {
+                inThrottle = false;
+                if (lastFunc) {
+                    // If there was a call during the throttle period, run it now
+                    clearTimeout(lastFunc);
+                    lastFunc = undefined;
+                    func.apply(context, args); // Use the latest args
+                    lastRan = Date.now();
+                    inThrottle = true; // Re-enter throttle after the trailing call
+                     setTimeout(() => inThrottle = false, limit);
+                }
+            }, limit);
+        } else {
 
+            // If the function was called during the throttle period, store the last call time
+            lastFunc = Date.now();
+            if (lastFunc - lastRan >= limit) {
+                func.apply(context, args); // Call the function with the latest args
+                lastRan = Date.now(); // Update lastRan to the current time
+            }
+            inThrottle = true; // Re-enter throttle after the trailing call
 
-// --- Three.js Setup & Animation Loop ---
-
-// Handle Window Resize
-window.addEventListener('resize', onWindowResize, false);
-
-function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+            setTimeout(() => inThrottle = false, limit); // Reset throttle after the limit
+        }
+    }
 }
 
-// Animation Loop
-function animate() {
-    requestAnimationFrame( animate );
-    // Game logic updates driven by SpacetimeDB callbacks will update mesh positions.
-    // The animation loop just needs to render the current state.
-    renderer.render( scene, camera );
-}
 
-animate();
+// Use throttle instead of debounce
+const handleMouseMove = throttle((event: MouseEvent) => {
+    // Convert mouse Y to Matter.js world Y coordinate
+    const canvasBounds = render.canvas.getBoundingClientRect();
+    const mouseY = event.clientY - canvasBounds.top;
 
-// Example: Hook up mouse movement to sendPaddleMove (basic)
-window.addEventListener('mousemove', (event) => {
-    // Convert mouse Y to world Y coordinates (simple example, needs refinement)
-    // Assumes camera is at z=5 looking towards origin, court height is ~ +/- 2.5
-    const courtHeight = 10; // Visual height in world units
-    const y = -(event.clientY / window.innerHeight - 0.5) * courtHeight;
-    // Clamp y to prevent paddle going too far off-screen?
-    // const paddleMaxY = courtHeight / 2 - (paddleGeometry.parameters.height / 2);
-    // const clampedY = Math.max(-paddleMaxY, Math.min(paddleMaxY, y));
-    sendPaddleMove(y); // Send unclamped y for now
+    // Clamp Y to world bounds (minus half paddle height)
+    const minY = PADDLE_HEIGHT / 2;
+    const maxY = WORLD_HEIGHT - PADDLE_HEIGHT / 2;
+    const clampedY = Math.max(minY, Math.min(maxY, mouseY));
+
+    sendPaddleMove(clampedY);
+}, 8); // Throttle interval (16ms for ~60fps)
+
+// Add mouse move listener to the canvas
+render.canvas.addEventListener('mousemove', handleMouseMove);
+
+
+// --- Cleanup ---
+// Stop the runner and renderer on window unload
+window.addEventListener('beforeunload', () => {
+    console.log("Stopping Matter.js runner and renderer.");
+    Runner.stop(runner);
+    Render.stop(render);
+
+    paddles.forEach(paddle => Composite.remove(world, paddle));
+    paddles.clear();
+    if (ballBody) {
+        Composite.remove(world, ballBody);
+        ballBody = null;
+    }
+    console.log("Matter.js cleanup done.");
 });
+
