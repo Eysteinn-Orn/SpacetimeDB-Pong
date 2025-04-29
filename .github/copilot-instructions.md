@@ -6,7 +6,7 @@
 - When writing Rust code for the SpacetimeDB module (`server/pong_module`), always reference the latest documentation at https://spacetimedb.com/docs/sdks/rust.
 - When writing Rust code for the SpacetimeDB module (`server/pong_module`), always reference the code examples and explanations provided in `server/llms.md`.
 - When writing client-side TypeScript code (`client/`), reference the latest TypeScript SpacetimeDB SDKs found at https://spacetimedb.com/docs/sdks/typescript.
-- When using Three.js in the client-side code, use the latest version and reference the latest documentation found at https://threejs.org/docs/.
+- When using Matter.js in the client-side code, use the latest version and reference the latest documentation found at https://brm.io/matter-js/docs/.
 
 ## Commit Messages
 
