@@ -129,7 +129,13 @@ let ballBody: Matter.Body | null = null; // Only one ball
 
 // --- Helper Functions ---
 function findPlayerInfo(connection: DbConnection, playerId: Identity) {
-    return Array.from(connection.db.playerInfo.iter()).find(p => p.playerId.isEqual(playerId));
+    // Iterate directly without creating intermediate array - more efficient
+    for (const playerInfo of connection.db.playerInfo.iter()) {
+        if (playerInfo.playerId.isEqual(playerId)) {
+            return playerInfo;
+        }
+    }
+    return undefined;
 }
 
 // --- SpacetimeDB Callbacks & Registration ---
@@ -326,46 +332,35 @@ initializeSpacetimeDB({
         }
     }
 });
-// Throttle function to limit the frequency of updates
+// Simplified throttle function - more efficient with less overhead
 function throttle(func: (...args: any[]) => void, limit: number) {
-    let inThrottle: boolean;
-    let lastFunc: number | undefined;
-    let lastRan: number;
+    let lastRan: number = 0;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    
     return function(this: any, ...args: any[]) {
         const context = this;
-        if (!inThrottle) {
+        const now = Date.now();
+        
+        if (now - lastRan >= limit) {
+            // Execute immediately if enough time has passed
             func.apply(context, args);
-            lastRan = Date.now();
-            inThrottle = true;
-            setTimeout(() => {
-                inThrottle = false;
-                if (lastFunc) {
-                    // If there was a call during the throttle period, run it now
-                    clearTimeout(lastFunc);
-                    lastFunc = undefined;
-                    func.apply(context, args); // Use the latest args
-                    lastRan = Date.now();
-                    inThrottle = true; // Re-enter throttle after the trailing call
-                     setTimeout(() => inThrottle = false, limit);
-                }
-            }, limit);
+            lastRan = now;
         } else {
-
-            // If the function was called during the throttle period, store the last call time
-            lastFunc = Date.now();
-            if (lastFunc - lastRan >= limit) {
-                func.apply(context, args); // Call the function with the latest args
-                lastRan = Date.now(); // Update lastRan to the current time
+            // Schedule execution for later, replacing any pending execution
+            if (timeout) {
+                clearTimeout(timeout);
             }
-            inThrottle = true; // Re-enter throttle after the trailing call
-
-            setTimeout(() => inThrottle = false, limit); // Reset throttle after the limit
+            timeout = setTimeout(() => {
+                func.apply(context, args);
+                lastRan = Date.now();
+                timeout = null;
+            }, limit - (now - lastRan));
         }
     }
 }
 
 
-// Use throttle instead of debounce
+// Use throttle to limit paddle updates
 const handleMouseMove = throttle((event: MouseEvent) => {
     // Convert mouse Y to Matter.js world Y coordinate
     const canvasBounds = render.canvas.getBoundingClientRect();
@@ -377,7 +372,7 @@ const handleMouseMove = throttle((event: MouseEvent) => {
     const clampedY = Math.max(minY, Math.min(maxY, mouseY));
 
     sendPaddleMove(clampedY);
-}, 8); // Throttle interval (16ms for ~60fps)
+}, 16); // Throttle interval (16ms for ~60fps, reduced network overhead)
 
 // Add mouse move listener to the canvas
 render.canvas.addEventListener('mousemove', handleMouseMove);

@@ -62,13 +62,13 @@ pub struct GameTickSchedule {
     pub scheduled_at: ScheduleAt,
 }
 
-#[spacetimedb(init)]
+#[reducer(init)]
 pub fn init(ctx: &ReducerContext) {
     // Initialize game state, ball, and schedule tick
     ensure_game_exists(ctx);
 
     // Schedule the first game tick
-    ctx.schedule_game_tick(GameTickSchedule {
+    ctx.db.game_tick_schedule().insert(GameTickSchedule {
         id: 0,
         scheduled_at: TimeDuration::from_micros(TICK_RATE_MS).into(),
     });
@@ -78,7 +78,8 @@ pub fn init(ctx: &ReducerContext) {
 // Initialize game state, ball, and schedule tick
 fn ensure_game_exists(ctx: &ReducerContext) {
     let mut game_initialized = false;
-    if ctx.db.game_state().iter().count() == 0 {
+    // Use .iter().next() instead of .iter().count() for existence check
+    if ctx.db.game_state().iter().next().is_none() {
         ctx.db.game_state().insert(GameState {
             singleton_id: 0,
             score1: 0,
@@ -89,7 +90,7 @@ fn ensure_game_exists(ctx: &ReducerContext) {
         log::info!("Initialized GameState");
         game_initialized = true;
     }
-    if ctx.db.ball().iter().count() == 0 {
+    if ctx.db.ball().iter().next().is_none() {
          ctx.db.ball().insert(Ball {
             singleton_id: 0,
             x: 0.0,
@@ -101,7 +102,7 @@ fn ensure_game_exists(ctx: &ReducerContext) {
     }
 
     // Schedule the game tick if it hasn't been scheduled
-    if game_initialized && ctx.db.game_tick_schedule().iter().count() == 0 {
+    if game_initialized && ctx.db.game_tick_schedule().iter().next().is_none() {
          ctx.db.game_tick_schedule().insert(GameTickSchedule {
             id: 0,
             scheduled_at: TimeDuration::from_micros(TICK_RATE_MS).into(),
@@ -120,7 +121,8 @@ pub fn identity_connected(ctx: &ReducerContext) {
         return; // Just return early
     }
 
-    let current_player_count = ctx.db.player_info().iter().count();
+    // Use fold to count efficiently instead of .count() which may not be optimized
+    let current_player_count = ctx.db.player_info().iter().fold(0, |acc, _| acc + 1);
     let assigned_side = (current_player_count % 2 + 1) as u8;
 
     // Insert operations - framework handles potential failure
@@ -223,36 +225,43 @@ fn game_tick(ctx: &ReducerContext, _args: GameTickSchedule) {
 
         // Check side 1 (left) if ball moving left and crossing the paddle line
         if ball.vx < 0.0 && old_ball_x > paddle_x_left && ball.x - BALL_RADIUS <= paddle_x_left + half_paddle_w {
-            // Find all players on side 1
-            for player_info in ctx.db.player_info().iter().filter(|p| p.side == 1) {
-                 if let Some(player_input) = ctx.db.player_input().player_id().find(&player_info.player_id) {
-                     // Check Y overlap
-                     if ball.y + BALL_RADIUS > player_input.paddle_y - half_paddle_h &&
-                        ball.y - BALL_RADIUS < player_input.paddle_y + half_paddle_h {
-                         // Collision detected!
-                         ball.vx = -ball.vx;
-                         ball.x = paddle_x_left + half_paddle_w + BALL_RADIUS; // Prevent sticking
-                         hit_paddle = true;
-                         break; // Only allow one hit per tick
-                     }
-                 }
+            // Iterate through player inputs directly and check side via player_info lookup
+            // This reduces nested iterations from O(n*m) to O(n)
+            for player_input in ctx.db.player_input().iter() {
+                // Check if this player is on side 1
+                if let Some(player_info) = ctx.db.player_info().player_id().find(&player_input.player_id) {
+                    if player_info.side == 1 {
+                        // Check Y overlap
+                        if ball.y + BALL_RADIUS > player_input.paddle_y - half_paddle_h &&
+                           ball.y - BALL_RADIUS < player_input.paddle_y + half_paddle_h {
+                            // Collision detected!
+                            ball.vx = -ball.vx;
+                            ball.x = paddle_x_left + half_paddle_w + BALL_RADIUS; // Prevent sticking
+                            hit_paddle = true;
+                            break; // Only allow one hit per tick
+                        }
+                    }
+                }
             }
         }
         // Check side 2 (right) if ball moving right and crossing the paddle line
         else if ball.vx > 0.0 && old_ball_x < paddle_x_right && ball.x + BALL_RADIUS >= paddle_x_right - half_paddle_w {
-             // Find all players on side 2
-             for player_info in ctx.db.player_info().iter().filter(|p| p.side == 2) {
-                 if let Some(player_input) = ctx.db.player_input().player_id().find(&player_info.player_id) {
-                     // Check Y overlap
-                     if ball.y + BALL_RADIUS > player_input.paddle_y - half_paddle_h &&
-                        ball.y - BALL_RADIUS < player_input.paddle_y + half_paddle_h {
-                         // Collision detected!
-                         ball.vx = -ball.vx;
-                         ball.x = paddle_x_right - half_paddle_w - BALL_RADIUS; // Prevent sticking
-                         hit_paddle = true;
-                         break; // Only allow one hit per tick
-                     }
-                 }
+            // Iterate through player inputs directly and check side via player_info lookup
+            for player_input in ctx.db.player_input().iter() {
+                // Check if this player is on side 2
+                if let Some(player_info) = ctx.db.player_info().player_id().find(&player_input.player_id) {
+                    if player_info.side == 2 {
+                        // Check Y overlap
+                        if ball.y + BALL_RADIUS > player_input.paddle_y - half_paddle_h &&
+                           ball.y - BALL_RADIUS < player_input.paddle_y + half_paddle_h {
+                            // Collision detected!
+                            ball.vx = -ball.vx;
+                            ball.x = paddle_x_right - half_paddle_w - BALL_RADIUS; // Prevent sticking
+                            hit_paddle = true;
+                            break; // Only allow one hit per tick
+                        }
+                    }
+                }
             }
         }
 
