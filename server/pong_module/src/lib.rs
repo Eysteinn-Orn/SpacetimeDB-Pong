@@ -62,13 +62,13 @@ pub struct GameTickSchedule {
     pub scheduled_at: ScheduleAt,
 }
 
-#[spacetimedb(init)]
+#[reducer(init)]
 pub fn init(ctx: &ReducerContext) {
     // Initialize game state, ball, and schedule tick
     ensure_game_exists(ctx);
 
     // Schedule the first game tick
-    ctx.schedule_game_tick(GameTickSchedule {
+    ctx.db.game_tick_schedule().insert(GameTickSchedule {
         id: 0,
         scheduled_at: TimeDuration::from_micros(TICK_RATE_MS).into(),
     });
@@ -78,7 +78,8 @@ pub fn init(ctx: &ReducerContext) {
 // Initialize game state, ball, and schedule tick
 fn ensure_game_exists(ctx: &ReducerContext) {
     let mut game_initialized = false;
-    if ctx.db.game_state().iter().count() == 0 {
+    // Use .iter().next() instead of .iter().count() for existence check
+    if ctx.db.game_state().iter().next().is_none() {
         ctx.db.game_state().insert(GameState {
             singleton_id: 0,
             score1: 0,
@@ -89,7 +90,7 @@ fn ensure_game_exists(ctx: &ReducerContext) {
         log::info!("Initialized GameState");
         game_initialized = true;
     }
-    if ctx.db.ball().iter().count() == 0 {
+    if ctx.db.ball().iter().next().is_none() {
          ctx.db.ball().insert(Ball {
             singleton_id: 0,
             x: 0.0,
@@ -101,7 +102,7 @@ fn ensure_game_exists(ctx: &ReducerContext) {
     }
 
     // Schedule the game tick if it hasn't been scheduled
-    if game_initialized && ctx.db.game_tick_schedule().iter().count() == 0 {
+    if game_initialized && ctx.db.game_tick_schedule().iter().next().is_none() {
          ctx.db.game_tick_schedule().insert(GameTickSchedule {
             id: 0,
             scheduled_at: TimeDuration::from_micros(TICK_RATE_MS).into(),
